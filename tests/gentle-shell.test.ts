@@ -41,6 +41,7 @@ import { oddPhaseRegistry } from "../lib/odd-phase.ts";
 import { CARD_STYLE, cardStyle, setCardStyle } from "../lib/shell-card.ts";
 import { resolveCardStyle, writeCardStyle } from "../lib/card-style-policy.ts";
 import { CARD_CONTENT, cardContent, resolveCardContent, setCardContent, writeCardContent } from "../lib/card-content-policy.ts";
+import { resolveRddSuggestions } from "../lib/rdd-suggestions-policy.ts";
 import { claimNotificationOwner } from "../lib/notification-service.ts";
 import { DEFAULT_NOTIFICATION_SETTINGS } from "../lib/notification-policy.ts";
 import { SUPER_YOLO_STATUS_TEXT, yoloBannerContent } from "../lib/yolo-session-policy.ts";
@@ -3659,6 +3660,51 @@ test("customize Editor rows preview global preference without applying until Ent
 	ui.overlayView!.handleInput(" ");
 	await new Promise<void>((resolve) => setImmediate(resolve));
 	assert.equal(resolveVimPolicy({ gentlePiConfigHome: home }).policy, "off");
+	ui.overlayView!.handleInput("\x1b"); await pending;
+});
+
+test("customize Editor rows persist the detailed RDD suggestions preference next to RDD", async (t) => {
+	const home = scopedDoubleEscCancelConfigHome(t);
+	const { pi, commands } = fakePi();
+	gentleShell(pi, { GENTLE_PI_CONFIG_HOME: home });
+	const { ctx, ui, overlayReady } = fakeContext();
+	const pending = commands.get("gentle:customize")!.handler("", ctx);
+	await overlayReady;
+	assert.ok(findCustomizeRow(ui, "Detailed RDD suggestions: off (current)"), "no preference file means off");
+	const frame = ui.overlayView!.render(180);
+	const rdd = frame.findIndex((line) => /RDD: (checking|unavailable)/.test(line));
+	assert.ok(rdd >= 0 && /Detailed RDD suggestions\s+○ on\s+● off/.test(frame[rdd + 1] ?? ""), `one options line right after RDD:\n${frame.join("\n")}`);
+	assert.match(frame.join("\n"), /Editor ·/);
+	assert.match(ui.overlayView!.render(180).join("\n"), /up to 5 flagged reasons on one line/);
+	assert.ok(findCustomizeRow(ui, "Detailed RDD suggestions: on"));
+	assert.match(ui.overlayView!.render(180).join("\n"), /up to 20 flagged reasons, one per line/);
+	assert.equal(existsSync(join(home, "rdd-suggestions.json")), false, "highlighting never applies");
+	await customizeAction(ui, "Detailed RDD suggestions: on");
+	assert.equal(resolveRddSuggestions({ gentlePiConfigHome: home }).suggestions, "detailed");
+	assert.match(ui.notices.at(-1)!, /Detailed RDD suggestions: on\. Applies to the next review reminder/);
+	assert.ok(findCustomizeRow(ui, "Detailed RDD suggestions: on (current)"));
+	assert.ok(findCustomizeRow(ui, "Detailed RDD suggestions: off"));
+	await customizeAction(ui, "Detailed RDD suggestions: off");
+	assert.equal(resolveRddSuggestions({ gentlePiConfigHome: home }).suggestions, "default");
+	assert.ok(findCustomizeRow(ui, "Detailed RDD suggestions: off (current)"));
+	ui.overlayView!.handleInput("\x1b"); await pending;
+});
+
+test("customize Editor rows refuse to overwrite a malformed RDD suggestions preference", async (t) => {
+	const home = scopedDoubleEscCancelConfigHome(t);
+	writeFileSync(join(home, "rdd-suggestions.json"), "{");
+	const { pi, commands } = fakePi();
+	gentleShell(pi, { GENTLE_PI_CONFIG_HOME: home });
+	const { ctx, ui, overlayReady } = fakeContext();
+	const pending = commands.get("gentle:customize")!.handler("", ctx);
+	await overlayReady;
+	for (const value of ["on", "off"]) assert.equal(findCustomizeRow(ui, `Detailed RDD suggestions: ${value} (current)`), false, "a malformed file marks neither value current");
+	assert.ok(findCustomizeRow(ui, "Detailed RDD suggestions: on"));
+	assert.match(ui.overlayView!.render(180).join("\n"), /malformed or unreadable file/i);
+	ui.overlayView!.handleInput("\r");
+	for (let attempt = 0; attempt < 100 && !ui.notices.some(n => /malformed or unreadable RDD suggestions/i.test(n)); attempt++) await new Promise<void>((resolve) => setTimeout(resolve, 5));
+	assert.ok(ui.notices.some(n => /Cannot update malformed or unreadable RDD suggestions preference/.test(n)), ui.notices.join("\n"));
+	assert.equal(readFileSync(join(home, "rdd-suggestions.json"), "utf8"), "{");
 	ui.overlayView!.handleInput("\x1b"); await pending;
 });
 

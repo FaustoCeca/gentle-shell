@@ -326,6 +326,17 @@ Pick how much a collapsed quiet-tool card shows in `/gentle:customize` → **Car
 
 Quiet tool cards redraw immediately after a change; bash rows follow on new calls. Gentle AI cards keep their full card and elapsed time at both levels.
 
+### Detailed RDD suggestions
+
+Pick how the review preflight reminder lists what the native assessment flagged in `/gentle:customize` → **Editor** → **Detailed RDD suggestions**, right after the RDD row. The choice is saved in `rdd-suggestions.json` in the Gentle Pi config home (`detailed` for on, `default` for off); a missing, malformed, or unreadable file reads as off (the default), and a malformed file is never overwritten. It applies from the next reminder and changes only the reminder's text, never when the reminder is sent.
+
+| Value | Review preflight reminder |
+|-------|---------------------------|
+| `off` (default) | Why the review is due, what the change touched, and up to 5 flagged reasons, 2,000 characters in all, on one `Flagged:` line; each native value is bounded to 160 characters. |
+| `on` | The same reason and scope, then a `Flagged by the assessment:` list with one bulleted reason per line, up to 20 and 8,000 characters in all, each native value bounded to 400 characters; the reminder also asks the agent to explain each flagged item in one sentence. |
+
+In both, a flagged reason reads as its quoted path, the phrase Pi mirrors from gentle-ai for its code with the code in parentheses (the code alone when Pi holds no phrase for it, quoted when it is not a plain identifier), and its quoted detail. The first reason is always shown, and reasons beyond either bound are counted as `and N more`.
+
 ### Compact Code card
 
 With quiet tools enabled, `codemode` uses the same rounded **Code** card. The collapsed view shows up to eight observed child calls in their original order, including repeats, with Pi's actual status and available nonnegative duration. Additional calls and failures are counted. Error payloads have a separate two-row preview even when their child falls outside the first eight; final output has a three-row physical budget, and a full-output locator remains visible when available.
