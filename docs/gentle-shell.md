@@ -284,14 +284,14 @@ Gentle notices follow the selected card style. In `neon`, informational cards us
 ```text
 ╭─ ✿ Gentle AI · review preflight ─────────────────────────────────────╮
 │ Receipt-driven development is enabled, and this worktree holds an    │
-│ unreviewed candidate (target sha256:…). First determine whether the  │
-│ user explicitly left this exact target unreviewed. If yes, do not    │
+│ unreviewed candidate.                                                │
+│ Why review is due: the native assessment rates this change high risk │
 ╰──────────────────────────────────────────────────────────────────────╯
 ```
 
 - Quiet tools use the selected card style with their actual name in the heading (`read`, `bash`, `grep`, `find`, `ls`, `edit`, `write`); bash keeps its command visible. Collapsed results show up to three physical preview rows, including search/list entries or changed diff lines alongside useful totals. Expand with the configured key shown in the top rule for complete available output and image handling. Expanded successful `write` cards show the complete written content; collapsed cards keep their concise confirmation. Failed writes show the error instead.
 - Every call into the gentle-ai binary and every `gentle_review` tool draws a rose card titled like the quiet `read` card: the colored 🌹 emoji, a short name, then the operation (`🌹 rdd inspect`, `🌹 gentle-ai version`), with `running`/`preparing`/`failed` shown until the call completes (`🌹 rdd running · start`). The rail uses the existing theme roles: warning while running/partial, success on completion, error on failure. Collapsed results show up to three useful physical rows, not just a line count. A JSON envelope instead collapses to one summary line of its key fields (status, outcome, risk, action, reason code, diagnostic message, e.g. `blocked · start · fresh_target_ready`) and expands as pretty-printed JSON. The expand key sits in the top rule once finished, and elapsed timing stays on the closing rule. Reviewer captures name their lens (`rdd capture · risk`; the group lists all four).
-- The review preflight reminder renders as a card in the transcript with the expand key in its top rule. Collapsed, it previews up to three non-blank physical rows of the reminder; expanded, it shows the full text.
+- The review preflight reminder renders as a card in the transcript with the expand key in its top rule. Collapsed, it previews the reminder's first rows (up to three non-blank physical rows), which reach why the review is due at the width shown above and may not on a narrower terminal; expanded, it shows the full text, including what the change touched and, with [Detailed RDD suggestions](#detailed-rdd-suggestions) on, one flagged reason per line.
 - An active dev-binary override shows above the editor at startup as a 🌹 gentle-ai card, in amber, naming the binary and its digest, and leaves with the first prompt; an invalid override shows in red with the reason.
 - Subagents draw their own card; see Gentle Agents below.
 

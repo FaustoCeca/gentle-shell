@@ -79,6 +79,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { Text, isKeyRelease, matchesKey, truncateToWidth, visibleWidth, type TuiMouseEvent, type TuiMouseEventResult } from "@earendil-works/pi-tui";
 import { resolveGentlePiAgentHome, gentlePiConfigHome } from "../lib/agent-home.ts";
+import { RDD_SUGGESTIONS, resolveRddSuggestions, type RddSuggestions } from "../lib/rdd-suggestions-policy.ts";
 import {
 	BACKGROUND_SUBAGENTS_FILE,
 	BACKGROUND_SUBAGENTS_SCHEMA,
@@ -286,6 +287,7 @@ import {
 	NATIVE_REVIEW_MODE_OPERATION,
 	NATIVE_REVIEW_MODE_SOURCE,
 	committedRangeUntrackedExclusion,
+	nativeRiskReasonSubject,
 	type NativeReviewCli,
 	type NativeIntendedUntrackedSelectionSubmission,
 	type NativeReviewAcknowledgeApprovedOutcome,
@@ -312,6 +314,7 @@ import {
 	WRITER_PROFILE,
 	VERIFICATION_TIER,
 	NATIVE_REVIEW_OUTCOME,
+	REVIEW_DUE_REASON,
 	type RddLine,
 	type VerificationTier,
 	type ReviewAssessmentV1,
@@ -10494,13 +10497,135 @@ async function resolveNegotiatedReviewStatusForSession(
 	}
 }
 
+// detailed-rdd-suggestions S3/S6: how many flagged reasons the reminder shows,
+// how many code points each native value keeps, and how many code points the
+// shown reasons keep together, per Customize layout.
+const REVIEW_PREFLIGHT_LIMITS: Readonly<Record<RddSuggestions, { readonly reasons: number; readonly text: number; readonly list: number }>> = {
+	[RDD_SUGGESTIONS.DEFAULT]: { reasons: 5, text: 160, list: 2_000 },
+	[RDD_SUGGESTIONS.DETAILED]: { reasons: 20, text: 400, list: 8_000 },
+};
+const REVIEW_PREFLIGHT_INSTRUCTION: Readonly<Record<RddSuggestions, string>> = {
+	[RDD_SUGGESTIONS.DEFAULT]: "When you propose or relay this review to the human, open with that reason and scope in the human's language; it precedes a provider consent envelope, which you still relay losslessly.",
+	[RDD_SUGGESTIONS.DETAILED]: "When you propose or relay this review to the human, open with that reason and scope in the human's language, explaining each flagged item in one sentence; it precedes a provider consent envelope, which you still relay losslessly.",
+};
+
+function reviewPreflightBound(value: string, limit: number): string {
+	const points = Array.from(value);
+	return points.length > limit ? `${points.slice(0, limit - 1).join("")}…` : value;
+}
+
+// Native reason text names repository paths, which the candidate controls.
+// Every native prose value is flattened to one line bounded by code point;
+// detail is also quoted by the caller.
+function reviewPreflightFlat(value: unknown): string | undefined {
+	if (typeof value !== "string") return undefined;
+	const flat = value.replace(/[\p{Cc}\p{Cf}\p{Cs}\p{Z}\s]+/gu, " ").trim();
+	return flat.length === 0 ? undefined : flat;
+}
+
+function reviewPreflightInline(value: unknown, limit: number): string | undefined {
+	const flat = reviewPreflightFlat(value);
+	return flat === undefined ? undefined : reviewPreflightBound(flat, limit);
+}
+
+// A path keeps its ordinary spaces, untrimmed and uncollapsed, so two distinct
+// file names never render as one (detailed-rdd-suggestions S7). Each control,
+// format, line or paragraph separator, lone surrogate, and whitespace or space
+// separator other than U+0020 becomes one U+FFFD, so the quoted path cannot add
+// a line. Other invisible characters, such as combining marks, pass through.
+function reviewPreflightPath(value: unknown, limit: number): string | undefined {
+	if (typeof value !== "string" || value.length === 0) return undefined;
+	return JSON.stringify(reviewPreflightBound(value.replace(/(?!\u0020)[\p{Cc}\p{Cf}\p{Cs}\p{Z}\s]/gu, "\uFFFD"), limit));
+}
+
+function reviewPreflightCount(value: unknown, noun: string): string | undefined {
+	return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? `${value} changed ${noun}${value === 1 ? "" : "s"}` : undefined;
+}
+
+// `"<path>": <phrase> (<code>) - "<detail>"`. The phrase is the one the
+// repository mirrors from gentle-ai, else the code stands alone; whatever
+// native left out is omitted, and an entry with nothing left is dropped.
+function reviewPreflightReason(reason: Record<string, unknown>, limit: number): string | undefined {
+	// A code that is not a plain identifier is quoted and gets no phrase, so it
+	// cannot pose as a phrase, a path or another entry (detailed-rdd-suggestions S6).
+	const flatCode = reviewPreflightFlat(reason.code);
+	const identifier = flatCode !== undefined && /^[a-z0-9_]+$/.test(flatCode);
+	const code = flatCode === undefined ? undefined : identifier ? reviewPreflightBound(flatCode, limit) : JSON.stringify(reviewPreflightBound(flatCode, limit));
+	const phrase = !identifier || typeof reason.code !== "string" ? undefined : nativeRiskReasonSubject(reason.code);
+	const label = code === undefined ? undefined : phrase === undefined ? code : `${phrase} (${code})`;
+	const path = reviewPreflightPath(reason.path, limit);
+	const head = path === undefined ? label : label === undefined ? path : `${path}: ${label}`;
+	const detail = reviewPreflightInline(reason.detail, limit);
+	const quoted = detail === undefined ? undefined : JSON.stringify(detail);
+	return quoted === undefined ? head : head === undefined ? quoted : `${head} - ${quoted}`;
+}
+
+// Why the review is due and what the change touched, from the assessment that
+// already decided due-ness. It reports only what native said: a due verdict
+// without a reason, and an assessment that did not answer, are named as such
+// (detailed-rdd-suggestions S8), never filled in.
+function renderReviewPreflightContext(assessment: Partial<ReviewAssessmentV1> | undefined, suggestions: RddSuggestions): readonly string[] {
+	const limits = REVIEW_PREFLIGHT_LIMITS[suggestions];
+	const dueReason = reviewPreflightInline(assessment?.reviewDueReason, limits.text);
+	const risk = reviewPreflightInline(assessment?.risk, limits.text);
+	const why = dueReason !== undefined
+		? dueReason === REVIEW_DUE_REASON.HIGH_RISK
+			? `the native assessment rates this change high risk (review_due_reason: ${dueReason})`
+			: `the native assessment reports this change due for review (review_due_reason: ${dueReason}${risk === undefined ? "" : `, risk: ${risk}`})`
+		: assessment?.reviewDue === true
+			? "the native assessment reports this change due for review without a reason"
+			: "the native assessment gave no reason (it failed, or the installed gentle-ai predates review_due), so this reminder is kept fail closed";
+	const counts = [reviewPreflightCount(assessment?.changedPaths, "path"), reviewPreflightCount(assessment?.changedLines, "line")].filter((entry): entry is string => entry !== undefined).join(", ");
+	// Rendering must never throw and lose the reminder, so malformed reasons are skipped.
+	const reported: unknown = assessment?.reasons;
+	const reasons = (Array.isArray(reported) ? reported : []).filter(isRecord).map((reason) => reviewPreflightReason(reason, limits.text)).filter((entry): entry is string => entry !== undefined);
+	// The list as a whole is bounded too (detailed-rdd-suggestions S6): entries are
+	// added in order while their rendered code points fit, the first always.
+	const shown: string[] = [];
+	let used = 0;
+	for (const entry of reasons) {
+		const size = Array.from(entry).length;
+		if (shown.length === limits.reasons || (shown.length > 0 && used + size > limits.list)) break;
+		shown.push(entry);
+		used += size;
+	}
+	if (reasons.length > shown.length) shown.push(`and ${reasons.length - shown.length} more`);
+	const unreported = "not reported by the native assessment";
+	if (suggestions === RDD_SUGGESTIONS.DETAILED) {
+		return [
+			`Why review is due: ${why}.`,
+			`What it touched: ${counts === "" ? unreported : counts}.`,
+			...(shown.length === 0 ? [] : ["Flagged by the assessment:", ...shown.map((entry) => `  • ${entry}`)]),
+		];
+	}
+	const touched = [counts, shown.length === 0 ? "" : `Flagged: ${shown.join("; ")}`].filter((entry) => entry !== "");
+	return [
+		`Why review is due: ${why}.`,
+		`What it touched: ${touched.length === 0 ? unreported : touched.join(". ")}.`,
+	];
+}
+
+// The Customize layout for the reminder text. It is read only once the
+// reminder is already decided, and a failure or malformed file is default.
+function reviewPreflightSuggestions(env: NodeJS.ProcessEnv): RddSuggestions {
+	try {
+		const resolution = resolveRddSuggestions({ gentlePiConfigHome: gentlePiConfigHome(env) });
+		return !resolution.malformed && resolution.suggestions === RDD_SUGGESTIONS.DETAILED ? RDD_SUGGESTIONS.DETAILED : RDD_SUGGESTIONS.DEFAULT;
+	} catch { return RDD_SUGGESTIONS.DEFAULT; }
+}
+
 // gentle-pi#556 / gentle-ai#4051: the mutation-gated reminder sent
 // through `agent_end`. It never runs START itself, so it names the one
 // supported continuation (gentle_review inspect) and defers the resulting
 // consent envelope to the human.
-function renderAgentEndReviewPreflightMessage(targetIdentity: string, baseRef?: string): string {
+function renderAgentEndReviewPreflightMessage(targetIdentity: string, baseRef?: string, assessment?: Partial<ReviewAssessmentV1>, suggestions: RddSuggestions = RDD_SUGGESTIONS.DEFAULT): string {
 	const inspect = JSON.stringify({ operation: "inspect", ...(baseRef === undefined ? {} : { input: JSON.stringify({ baseRef, committedOnly: true }) }) });
-	return `Receipt-driven development is enabled, and this worktree holds an unreviewed candidate (target ${targetIdentity}). First determine whether the user explicitly left this exact target unreviewed. If yes, do not invoke review; report that disposition and continue. Only otherwise, call the gentle_review tool with ${inspect} and follow the transition it returns; it currently offers review.start for this target. An eligible interactive Pi host may resolve consent directly with its own three-action UI. If gentle_review instead returns an unresolved gentle-ai.review-integration.consent/v3 envelope, relay that original two-choice provider envelope to the human losslessly. Never answer consent from model prose or tool arguments.\n\nThis extension never runs START itself. This reminder consumes only this session's observed mutation generation.`;
+	// The send was already decided, so a malformed assessment that makes
+	// rendering throw is reported as no answer rather than losing the reminder.
+	let context: string;
+	try { context = renderReviewPreflightContext(assessment, suggestions).join("\n"); }
+	catch { context = renderReviewPreflightContext(undefined, suggestions).join("\n"); }
+	return `Receipt-driven development is enabled, and this worktree holds an unreviewed candidate.\n${context}\n${REVIEW_PREFLIGHT_INSTRUCTION[suggestions]}\n\nTarget ${targetIdentity}. First determine whether the user explicitly left this exact target unreviewed. If yes, do not invoke review; report that disposition and continue. Only otherwise, call the gentle_review tool with ${inspect} and follow the transition it returns; it currently offers review.start for this target. An eligible interactive Pi host may resolve consent directly with its own three-action UI. If gentle_review instead returns an unresolved gentle-ai.review-integration.consent/v3 envelope, relay that original two-choice provider envelope to the human losslessly. Never answer consent from model prose or tool arguments.\n\nThis extension never runs START itself. This reminder consumes only this session's observed mutation generation.`;
 }
 
 function canonicalReviewCaptureBinding(value: unknown): string {
@@ -13351,19 +13476,29 @@ function createGentleAiExtensionForTesting(
 		// STATUS above supplies the offer and target identity, never due-ness. Only
 		// an explicit false suppresses the nudge; an assessment that cannot answer,
 		// or an older binary without review_due, keeps the nudge (fail closed).
+		// The same assessment also carries why the review is due and what the
+		// change touched; the reminder relays it and it never decides anything.
+		let assessment: ReviewAssessmentV1 | undefined;
 		if (nativeReviewCli.assess !== undefined) {
 			let reviewDue: boolean | undefined;
-			try { reviewDue = (await nativeReviewCli.assess({ cwd: root, ...selector })).reviewDue; }
-			catch { reviewDue = undefined; }
+			try {
+				assessment = await nativeReviewCli.assess({ cwd: root, ...selector });
+				reviewDue = assessment.reviewDue;
+			} catch {
+				assessment = undefined;
+				reviewDue = undefined;
+			}
 			if (reviewDue === false) return;
 			if (!current()) return;
 			if (!pendingReviewMutation(ctx.sessionManager, root, mutation)) return;
 		}
 		const targetIdentity = status.targetIdentity;
+		// The preference shapes only the text, so it is read after every check above.
+		const suggestions = reviewPreflightSuggestions(permissionEnvironment);
 		pi.sendMessage(
 			{
 				customType: "gentle-pi.review-preflight",
-				content: renderAgentEndReviewPreflightMessage(targetIdentity, baseRef),
+				content: renderAgentEndReviewPreflightMessage(targetIdentity, baseRef, assessment, suggestions),
 				display: true,
 			},
 			{ triggerTurn: true, deliverAs: "followUp" },
