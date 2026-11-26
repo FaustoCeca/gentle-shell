@@ -284,14 +284,14 @@ Gentle notices follow the selected card style. In `neon`, informational cards us
 ```text
 ╭─ ✿ Gentle AI · review preflight ─────────────────────────────────────╮
 │ Receipt-driven development is enabled, and this worktree holds an    │
-│ unreviewed candidate (target sha256:…). First determine whether the  │
-│ user explicitly left this exact target unreviewed. If yes, do not    │
+│ unreviewed candidate.                                                │
+│ Why review is due: the native assessment rates this change high risk │
 ╰──────────────────────────────────────────────────────────────────────╯
 ```
 
 - Quiet tools use the selected card style with their actual name in the heading (`read`, `bash`, `grep`, `find`, `ls`, `edit`, `write`); bash keeps its command visible. Collapsed results show up to three physical preview rows, including search/list entries or changed diff lines alongside useful totals. Expand with the configured key shown in the top rule for complete available output and image handling. Expanded successful `write` cards show the complete written content; collapsed cards keep their concise confirmation. Failed writes show the error instead.
 - Every call into the gentle-ai binary and every `gentle_review` tool draws a rose card titled like the quiet `read` card: the colored 🌹 emoji, a short name, then the operation (`🌹 rdd inspect`, `🌹 gentle-ai version`), with `running`/`preparing`/`failed` shown until the call completes (`🌹 rdd running · start`). The rail uses the existing theme roles: warning while running/partial, success on completion, error on failure. Collapsed results show up to three useful physical rows, not just a line count. A JSON envelope instead collapses to one summary line of its key fields (status, outcome, risk, action, reason code, diagnostic message, e.g. `blocked · start · fresh_target_ready`) and expands as pretty-printed JSON. The expand key sits in the top rule once finished, and elapsed timing stays on the closing rule. Reviewer captures name their lens (`rdd capture · risk`; the group lists all four).
-- The review preflight reminder renders as a card in the transcript with the expand key in its top rule. Collapsed, it previews up to three non-blank physical rows of the reminder; expanded, it shows the full text.
+- The review preflight reminder renders as a card in the transcript with the expand key in its top rule. Collapsed, it previews the reminder's first rows (up to three non-blank physical rows), which reach why the review is due at the width shown above and may not on a narrower terminal; expanded, it shows the full text, including what the change touched and, with [Detailed RDD suggestions](#detailed-rdd-suggestions) on, one flagged reason per line.
 - An active dev-binary override shows above the editor at startup as a 🌹 gentle-ai card, in amber, naming the binary and its digest, and leaves with the first prompt; an invalid override shows in red with the reason.
 - Subagents draw their own card; see Gentle Agents below.
 
@@ -325,6 +325,17 @@ Pick how much a collapsed quiet-tool card shows in `/gentle:customize` → **Car
 | `minimal` | Only the command row for `read`, `write`, `bash`, `grep`, `find`, `ls`, and `edit`; the expand key still reveals the full result. Failed calls keep their bounded error tail. Bash rows draw as a Gentle card when the host supports `pi.registerToolRenderer`, with the bare command as the title. Collapsed, that title is one row saying what the command does: its first line without leading `cd <dir> &&` hops, clipped to the row, with `… +N lines` when more lines fold behind it; expanding shows the whole command. |
 
 Quiet tool cards redraw immediately after a change; bash rows follow on new calls. Gentle AI cards keep their full card and elapsed time at both levels.
+
+### Detailed RDD suggestions
+
+Pick how the review preflight reminder lists what the native assessment flagged in `/gentle:customize` → **Editor** → **Detailed RDD suggestions**, right after the RDD row. The choice is saved in `rdd-suggestions.json` in the Gentle Pi config home (`detailed` for on, `default` for off); a missing, malformed, or unreadable file reads as off (the default), and a malformed file is never overwritten. It applies from the next reminder and changes only the reminder's text, never when the reminder is sent.
+
+| Value | Review preflight reminder |
+|-------|---------------------------|
+| `off` (default) | Why the review is due, what the change touched, and up to 5 flagged reasons, 2,000 characters in all, on one `Flagged:` line; each native value is bounded to 160 characters. |
+| `on` | The same reason and scope, then a `Flagged by the assessment:` list with one bulleted reason per line, up to 20 and 8,000 characters in all, each native value bounded to 400 characters; the reminder also asks the agent to explain each flagged item in one sentence. |
+
+In both, a flagged reason reads as its quoted path, the phrase Pi mirrors from gentle-ai for its code with the code in parentheses (the code alone when Pi holds no phrase for it, quoted when it is not a plain identifier), and its quoted detail. The first reason is always shown, and reasons beyond either bound are counted as `and N more`.
 
 ### Compact Code card
 

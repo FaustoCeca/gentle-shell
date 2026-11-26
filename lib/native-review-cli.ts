@@ -789,6 +789,13 @@ function nativeRiskEvidenceSubject(reason: NativeRiskEvidenceReason): string {
 	return REVIEW_RISK_SUBJECT_BY_CODE[code] ?? "";
 }
 
+// The mirrored phrase for a reason code alone, for a surface that shows the code
+// next to it. hot_path depends on a signal and has none here, like any code the
+// table does not map, so the caller shows the code alone rather than guess.
+export function nativeRiskReasonSubject(code: string): string | undefined {
+	return Object.prototype.hasOwnProperty.call(REVIEW_RISK_SUBJECT_BY_CODE, code) ? REVIEW_RISK_SUBJECT_BY_CODE[code] : undefined;
+}
+
 function nativeRiskEvidencePhrase(reason: NativeRiskEvidenceReason): string {
 	const path = typeof reason.path === "string" ? reason.path.trim() : "";
 	// An empty file is named first and described second. Every other subject

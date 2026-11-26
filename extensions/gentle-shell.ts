@@ -29,6 +29,7 @@ import { SessionWorktreeRegistry, resolveSessionWorktree, worktreeGitEnvironment
 import { CARD_STYLE, CARD_TONE, cardStyle, panelHeaderRow, renderCard, setCardStyle, type Card, type CardTheme } from "../lib/shell-card.ts";
 import { resolveCardStyle, writeCardStyle } from "../lib/card-style-policy.ts";
 import { CARD_CONTENT, resolveCardContent, setCardContent, writeCardContent } from "../lib/card-content-policy.ts";
+import { RDD_SUGGESTIONS, resolveRddSuggestions, writeRddSuggestions, type RddSuggestions } from "../lib/rdd-suggestions-policy.ts";
 import { CommandPalette, commandsKey, type CommandPaletteResult } from "../lib/command-palette.ts";
 import { buildCommandPaletteGroups } from "../lib/command-palette-catalog.ts";
 import { buildKeymapRows } from "../lib/keymaps-customize.ts";
@@ -3480,6 +3481,23 @@ export default function gentleShell(pi: ExtensionAPI, env: NodeJS.ProcessEnv = p
 					close();
 				},
 			});
+			// Gentle AI rereads this at each review-preflight reminder, so a change
+			// applies to the next one; it shapes the text, never whether it is sent.
+			const rddSuggestionsPreview = {
+				[RDD_SUGGESTIONS.DETAILED]: "review reminder: why + scope · up to 20 flagged reasons, one per line · agent explains each",
+				[RDD_SUGGESTIONS.DEFAULT]: "review reminder: why + scope · up to 5 flagged reasons on one line",
+			};
+			const rddSuggestionsCurrent = (suggestions: RddSuggestions) => { const current = resolveRddSuggestions(home); return current.suggestions === suggestions && !current.malformed; };
+			for (const [suggestions, value] of [[RDD_SUGGESTIONS.DETAILED, "on"], [RDD_SUGGESTIONS.DEFAULT, "off"]] as const) add(
+				() => `Detailed RDD suggestions: ${value}${rddSuggestionsCurrent(suggestions) ? " (current)" : ""}`,
+				`Detailed RDD suggestions: ${value}. Applies to the next review reminder.`,
+				() => {
+					writeRddSuggestions(suggestions, home);
+					requestCustomizeRender?.();
+				},
+				() => ({ title: `RDD suggestions · ${suggestions}`, sample: `${rddSuggestionsPreview[suggestions]}${resolveRddSuggestions(home).malformed ? " · malformed or unreadable file" : ""}` }),
+				{ ...explicitChoice("Detailed RDD suggestions", value, () => rddSuggestionsCurrent(suggestions)), hint: "How the RDD review reminder lists flagged reasons; never when it is sent" },
+			);
 			let yoloDisplay: YoloDisplay = YOLO_DISPLAY.unavailable;
 			let permissionDisplay = "normal", permissionDefault = "normal";
 			let requestYoloRender = () => {};
